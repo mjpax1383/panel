@@ -4,8 +4,8 @@ import urllib.request
 import ssl
 
 # ========== CONFIGURATION ==========
-TARGET_HOST = "YOUR_PANEL_IP_OR_DOMAIN"
-TARGET_PORT = 54321         # change to your 3x-ui panel port (usually 54321)
+TARGET_HOST = "x2.mjpax.eu.cc"
+TARGET_PORT = 26503         # change to your 3x-ui panel port (usually 54321)
 TARGET_USE_SSL = True       # set False if your panel uses http://
 LISTEN_PORT = 8080          # local port inside Codespace
 # ===================================
