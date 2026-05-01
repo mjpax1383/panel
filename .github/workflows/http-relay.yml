@@ -1,68 +1,69 @@
-name: Host 3x-ui Panel
+name: Create SSH Server for Manual 3x-ui Installation
 
 on:
-  workflow_dispatch:   # manual trigger
+  workflow_dispatch:
 
 jobs:
-  host:
+  ssh-server:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 360   # 6 hours max
 
     steps:
-      - name: Generate random credentials
+      - name: Set random password for runner user
         run: |
-          echo "PANEL_USER=admin" >> $GITHUB_ENV
-          echo "PANEL_PASS=$(openssl rand -base64 12)" >> $GITHUB_ENV
-          echo "PANEL_PORT=2053" >> $GITHUB_ENV
+          PASSWORD=$(openssl rand -base64 16)
+          echo "runner:${PASSWORD}" | sudo chpasswd
+          echo "SSH_PASSWORD=$PASSWORD" >> $GITHUB_ENV
+          echo "🔐 SSH password generated"
 
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y curl openssl
-
-      - name: Install 3x-ui
+      - name: Ensure SSH server is running
         run: |
-          curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o install.sh
-          echo "" | sudo bash install.sh
-
-      - name: Configure panel port
-        run: |
-          sudo sed -i "s/\"port\":[0-9]*/\"port\": ${{ env.PANEL_PORT }}/" /etc/x-ui/config.json
-          grep '"port"' /etc/x-ui/config.json
-
-      - name: Start panel manually
-        run: |
-          sudo systemctl stop x-ui 2>/dev/null || true
-          sudo nohup /usr/local/x-ui/x-ui > /tmp/x-ui.log 2>&1 &
-          sleep 5
-          if ! ss -tlnp | grep -q ":${{ env.PANEL_PORT }}"; then
-            echo "Panel failed to start. Log:"
-            cat /tmp/x-ui.log
-            exit 1
-          fi
-
-      - name: Set custom login credentials
-        run: |
-          sudo /usr/local/x-ui/x-ui setting -username ${{ env.PANEL_USER }} -password ${{ env.PANEL_PASS }}
+          sudo systemctl enable ssh
+          sudo systemctl start ssh
+          sudo ufw allow ssh 2>/dev/null || true
 
       - name: Install cloudflared
         run: |
           curl -L -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared
+          sudo mv cloudflared /usr/local/bin/
 
-      - name: Expose panel via Cloudflare Tunnel
+      - name: Expose SSH via Cloudflare Tunnel
         run: |
-          ./cloudflared tunnel --url http://localhost:${{ env.PANEL_PORT }} > cloudflared.log 2>&1 &
+          cloudflared tunnel --url ssh://localhost:22 > cloudflared.log 2>&1 &
           sleep 10
-          url=$(grep -o 'https://[^ ]*\.trycloudflare\.com' cloudflared.log | head -1)
-          if [ -z "$url" ]; then
-            echo "Tunnel URL not obtained. Log:"
+          # Extract the hostname from the tunnel output
+          TUNNEL_HOST=$(grep -o 'trycloudflare\.com' cloudflared.log | head -1)
+          # Actually we need the full hostname, try more robust extraction
+          TUNNEL_ADDR=$(grep -o '[a-zA-Z0-9.-]*\.trycloudflare\.com' cloudflared.log | head -1)
+          if [ -z "$TUNNEL_ADDR" ]; then
+            echo "❌ Failed to get tunnel host. Log:"
             cat cloudflared.log
             exit 1
           fi
+          echo "SSH_HOST=$TUNNEL_ADDR" >> $GITHUB_ENV
+          echo "✅ Tunnel ready: $TUNNEL_ADDR"
+
+      - name: Print connection instructions
+        run: |
+          echo ""
           echo "============================================"
-          echo "  3x-ui Panel is ready!"
-          echo "  URL:      $url"
-          echo "  Username: ${{ env.PANEL_USER }}"
-          echo "  Password: ${{ env.PANEL_PASS }}"
-          echo "  This session will last up to 6 hours."
+          echo "  🐧 Temporary SSH Server Ready!"
           echo "============================================"
+          echo ""
+          echo "  🔗 SSH command:"
+          echo "    ssh -o StrictHostKeyChecking=no runner@${{ env.SSH_HOST }}"
+          echo ""
+          echo "  🔑 Password:"
+          echo "    ${{ env.SSH_PASSWORD }}"
+          echo ""
+          echo "  ⏰ This server will die after 6 hours."
+          echo "    You can now install 3x-ui manually."
+          echo ""
+          echo "  Recommended install commands after logging in:"
+          echo "    curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o install.sh"
+          echo "    echo '' | sudo bash install.sh"
+          echo ""
+          echo "============================================"
+          # Keep job alive so the tunnel stays open
           tail -f /dev/null
