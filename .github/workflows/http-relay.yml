@@ -1,12 +1,12 @@
 name: Host 3x-ui Panel
 
 on:
-  workflow_dispatch:   # you start it manually from the Actions tab
+  workflow_dispatch:   # manual trigger
 
 jobs:
   host:
     runs-on: ubuntu-latest
-    timeout-minutes: 360   # maximum 6 hours
+    timeout-minutes: 360
 
     steps:
       - name: Generate random credentials
@@ -20,18 +20,16 @@ jobs:
 
       - name: Install 3x-ui
         run: |
-          # The script requires root; feed an empty line to accept defaults
-          echo "" | sudo bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
+          curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o install.sh
+          echo "" | sudo bash install.sh
 
       - name: Configure panel port
         run: |
-          # Change the default port (usually 54321) to our chosen port
           sudo sed -i "s/\"port\":[0-9]*/\"port\": ${{ env.PANEL_PORT }}/" /etc/x-ui/config.json
-          grep '"port"' /etc/x-ui/config.json   # verify
+          grep '"port"' /etc/x-ui/config.json
 
       - name: Start panel manually
         run: |
-          # systemctl is not available – start the binary directly
           sudo systemctl stop x-ui 2>/dev/null || true
           sudo nohup /usr/local/x-ui/x-ui > /tmp/x-ui.log 2>&1 &
           sleep 5
@@ -43,7 +41,6 @@ jobs:
 
       - name: Set custom login credentials
         run: |
-          # Override the default admin/admin with the generated random password
           sudo /usr/local/x-ui/x-ui setting -username ${{ env.PANEL_USER }} -password ${{ env.PANEL_PASS }}
 
       - name: Install cloudflared
@@ -68,5 +65,4 @@ jobs:
           echo "  Password: ${{ env.PANEL_PASS }}"
           echo "  This session will last up to 6 hours."
           echo "============================================"
-          # keep the job alive so the tunnel stays online
           tail -f /dev/null
