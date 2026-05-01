@@ -1,12 +1,12 @@
 name: Host 3x-ui Panel
 
 on:
-  workflow_dispatch:   # manual trigger from the Actions tab
+  workflow_dispatch:   # you start it manually from the Actions tab
 
 jobs:
   host:
     runs-on: ubuntu-latest
-    timeout-minutes: 360   # maximum GitHub job lifetime
+    timeout-minutes: 360   # maximum 6 hours
 
     steps:
       - name: Generate random credentials
@@ -15,28 +15,36 @@ jobs:
           echo "PANEL_PASS=$(openssl rand -base64 12)" >> $GITHUB_ENV
           echo "PANEL_PORT=2053" >> $GITHUB_ENV
 
-      - name: Install dependencies
+      - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y curl openssl
 
       - name: Install 3x-ui
-        env:
-          PANEL_PORT: ${{ env.PANEL_PORT }}
-          PANEL_USER: ${{ env.PANEL_USER }}
-          PANEL_PASS: ${{ env.PANEL_PASS }}
         run: |
-          # prevent interactive prompts by feeding an empty line
-          bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) <<< ""
+          # The script requires root; feed an empty line to accept defaults
+          echo "" | sudo bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
+
+      - name: Configure panel port
+        run: |
+          # Change the default port (usually 54321) to our chosen port
+          sudo sed -i "s/\"port\":[0-9]*/\"port\": ${{ env.PANEL_PORT }}/" /etc/x-ui/config.json
+          grep '"port"' /etc/x-ui/config.json   # verify
 
       - name: Start panel manually
         run: |
-          # systemctl usually fails on GitHub runners, so we start the binary directly
-          nohup /usr/local/x-ui/x-ui > /tmp/x-ui.log 2>&1 &
-          sleep 3
+          # systemctl is not available – start the binary directly
+          sudo systemctl stop x-ui 2>/dev/null || true
+          sudo nohup /usr/local/x-ui/x-ui > /tmp/x-ui.log 2>&1 &
+          sleep 5
           if ! ss -tlnp | grep -q ":${{ env.PANEL_PORT }}"; then
-            echo "Panel did not start. Log:"
+            echo "Panel failed to start. Log:"
             cat /tmp/x-ui.log
             exit 1
           fi
+
+      - name: Set custom login credentials
+        run: |
+          # Override the default admin/admin with the generated random password
+          sudo /usr/local/x-ui/x-ui setting -username ${{ env.PANEL_USER }} -password ${{ env.PANEL_PASS }}
 
       - name: Install cloudflared
         run: |
@@ -49,7 +57,7 @@ jobs:
           sleep 10
           url=$(grep -o 'https://[^ ]*\.trycloudflare\.com' cloudflared.log | head -1)
           if [ -z "$url" ]; then
-            echo "Failed to get tunnel URL. Log:"
+            echo "Tunnel URL not obtained. Log:"
             cat cloudflared.log
             exit 1
           fi
@@ -60,5 +68,5 @@ jobs:
           echo "  Password: ${{ env.PANEL_PASS }}"
           echo "  This session will last up to 6 hours."
           echo "============================================"
-          # keep the job alive so the tunnel stays open
+          # keep the job alive so the tunnel stays online
           tail -f /dev/null
